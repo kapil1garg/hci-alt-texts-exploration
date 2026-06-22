@@ -1,17 +1,22 @@
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
-from sklearn.model_selection import KFold
 
 import torch
 import torchmetrics
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
-from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import TensorBoardLogger
 from torch.nn.modules.loss import BCELoss
 from torch.utils.data import DataLoader, Dataset
-from transformers import AdamW, AutoConfig, AutoModel, AutoTokenizer, get_linear_schedule_with_warmup
+from transformers import (
+    AdamW,
+    AutoConfig,
+    AutoModel,
+    AutoTokenizer,
+    get_linear_schedule_with_warmup,
+)
 
 
 class AltTextSentenceDataset(Dataset):
@@ -38,41 +43,43 @@ class AltTextSentenceDataset(Dataset):
         }
         """
         current_item = self.data[idx]
-        text = current_item['text']
+        text = current_item["text"]
         token_ids = self.tokenizer.encode(text, max_length=512, truncation=True)
-        labels = current_item['labels']
-        labels_float = [float(l) for l in labels]
+        labels = current_item["labels"]
+        labels_float = [float(label) for label in labels]
 
-        return {
-            "text": token_ids,
-            "labels": labels,
-            "labels_float": labels_float
-        }
+        return {"text": token_ids, "labels": labels, "labels_float": labels_float}
 
     @staticmethod
     def collate_fn(data):
         token_ids = [torch.tensor(entry["text"]) for entry in data]
         labels = [torch.tensor(entry["labels"]) for entry in data]
         labels_float = [torch.tensor(entry["labels_float"]) for entry in data]
-        token_ids_tensor = torch.nn.utils.rnn.pad_sequence(token_ids, batch_first=True, padding_value=0)
-        labels_tensor = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=-100)
-        labels_float_tensor = torch.nn.utils.rnn.pad_sequence(labels_float, batch_first=True, padding_value=-100)
+        token_ids_tensor = torch.nn.utils.rnn.pad_sequence(
+            token_ids, batch_first=True, padding_value=0
+        )
+        labels_tensor = torch.nn.utils.rnn.pad_sequence(
+            labels, batch_first=True, padding_value=-100
+        )
+        labels_float_tensor = torch.nn.utils.rnn.pad_sequence(
+            labels_float, batch_first=True, padding_value=-100
+        )
         return {
             "input_ids": token_ids_tensor,
             "labels": labels_tensor,
-            "labels_float": labels_float_tensor
+            "labels_float": labels_float_tensor,
         }
 
 
 class DataModule(LightningDataModule):
     def __init__(
-            self,
-            train_file: str,
-            val_file: str,
-            model_name_or_path: str,
-            max_seq_length: int = 512,
-            batch_size: int = 32,
-            **kwargs,
+        self,
+        train_file: str,
+        val_file: str,
+        model_name_or_path: str,
+        max_seq_length: int = 512,
+        batch_size: int = 32,
+        **kwargs,
     ):
         super().__init__()
         self.train_file = train_file
@@ -102,7 +109,7 @@ class DataModule(LightningDataModule):
             self.train_dataset,
             batch_size=self.batch_size,
             collate_fn=AltTextSentenceDataset.collate_fn,
-            num_workers=2
+            num_workers=2,
         )
 
     def val_dataloader(self):
@@ -110,22 +117,22 @@ class DataModule(LightningDataModule):
             self.val_dataset,
             batch_size=self.batch_size,
             collate_fn=AltTextSentenceDataset.collate_fn,
-            num_workers=2
+            num_workers=2,
         )
 
 
 class TransformerModule(LightningModule):
     def __init__(
-            self,
-            model_name_or_path: str,
-            num_labels: int = 4,
-            learning_rate: float = 3e-5,
-            adam_epsilon: float = 1e-8,
-            warmup_steps: int = 0,
-            weight_decay: float = 0.0,
-            max_seq_length: int = 512,
-            batch_size: int = 32,
-            **kwargs,
+        self,
+        model_name_or_path: str,
+        num_labels: int = 4,
+        learning_rate: float = 3e-5,
+        adam_epsilon: float = 1e-8,
+        warmup_steps: int = 0,
+        weight_decay: float = 0.0,
+        max_seq_length: int = 512,
+        batch_size: int = 32,
+        **kwargs,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -146,7 +153,9 @@ class TransformerModule(LightningModule):
         # inputs['input_ids'].shape -> [batch_size, max_len]
         output = self.model(inputs["input_ids"])
         # cls_output_state.shape -> [batch_size, 768]
-        cls_output_state = output["last_hidden_state"][inputs["input_ids"] == self.tokenizer.cls_token_id]
+        cls_output_state = output["last_hidden_state"][
+            inputs["input_ids"] == self.tokenizer.cls_token_id
+        ]
         # logits.shape -> [batch_size, num_labels] -> [num_labels * batch_size]
         logits = self.classifier(cls_output_state)
         probs = self.sigmoid(logits)
@@ -187,7 +196,9 @@ class TransformerModule(LightningModule):
         if stage != "fit":
             return
         train_loader = self.train_dataloader()
-        tb_size = self.hparams.batch_size * max(1, self.trainer.gpus if self.trainer.gpus else 0)
+        tb_size = self.hparams.batch_size * max(
+            1, self.trainer.gpus if self.trainer.gpus else 0
+        )
         ab_size = self.trainer.accumulate_grad_batches * float(self.trainer.max_epochs)
         self.total_steps = (len(train_loader.dataset) // tb_size) // ab_size
 
@@ -197,15 +208,27 @@ class TransformerModule(LightningModule):
         no_decay = ["bias", "LayerNorm.weight"]
         optimizer_grouped_parameters = [
             {
-                "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+                "params": [
+                    p
+                    for n, p in model.named_parameters()
+                    if not any(nd in n for nd in no_decay)
+                ],
                 "weight_decay": self.hparams.weight_decay,
             },
             {
-                "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
+                "params": [
+                    p
+                    for n, p in model.named_parameters()
+                    if any(nd in n for nd in no_decay)
+                ],
                 "weight_decay": 0.0,
             },
         ]
-        optimizer = AdamW(optimizer_grouped_parameters, lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
+        optimizer = AdamW(
+            optimizer_grouped_parameters,
+            lr=self.hparams.learning_rate,
+            eps=self.hparams.adam_epsilon,
+        )
 
         scheduler = get_linear_schedule_with_warmup(
             optimizer,
@@ -222,11 +245,11 @@ def train(model, train_file, val_file, outdir, logname, device_type, devices):
     model = TransformerModule(warmup_steps=200, model_name_or_path=model)
     logger = TensorBoardLogger(outdir, name=logname)
     checkpoint_callback = ModelCheckpoint(
-        dirpath=os.path.join(outdir, 'checkpoints'),
+        dirpath=os.path.join(outdir, "checkpoints"),
         save_top_k=1,
         verbose=True,
-        monitor='val_loss',
-        mode='min'
+        monitor="val_loss",
+        mode="min",
     )
     trainer = Trainer(
         accelerator=device_type,
@@ -235,7 +258,7 @@ def train(model, train_file, val_file, outdir, logname, device_type, devices):
         max_epochs=16,
         default_root_dir=outdir,
         logger=logger,
-        callbacks=[checkpoint_callback]
+        callbacks=[checkpoint_callback],
     )
     trainer.fit(model, dm)
     trainer.validate(model, dm.val_dataloader())
@@ -250,34 +273,42 @@ if __name__ == "__main__":
 
     model_name = args.model
     data_dir = args.data
-    out_dir = os.path.join(args.outdir, model_name.replace('/', '_'))
+    out_dir = os.path.join(args.outdir, model_name.replace("/", "_"))
 
     if not os.path.exists(data_dir):
-        print('Data path does not exist!')
+        print("Data path does not exist!")
         sys.exit(-1)
     os.makedirs(out_dir, exist_ok=True)
 
     # check if GPUs available
     gpu_count = torch.cuda.device_count()
     if gpu_count == 0:
-        device_type = 'cpu'
+        device_type = "cpu"
         devices = None
     else:
-        device_type = 'gpu'
+        device_type = "gpu"
         devices = [0]
 
     # get folds
     for i in range(5):
-        print(f'Fold {i}')
-        train_file = os.path.join(data_dir, f'{i:02d}', 'train.jsonl')
-        val_file = os.path.join(data_dir, f'{i:02d}', 'val.jsonl')
+        print(f"Fold {i}")
+        train_file = os.path.join(data_dir, f"{i:02d}", "train.jsonl")
+        val_file = os.path.join(data_dir, f"{i:02d}", "val.jsonl")
         if not os.path.exists(train_file):
             raise FileNotFoundError(f"{train_file} not found!")
         if not os.path.exists(val_file):
             raise FileNotFoundError(f"{val_file} not found!")
-        out_subdir = os.path.join(out_dir, f'fold_{i:02d}')
+        out_subdir = os.path.join(out_dir, f"fold_{i:02d}")
         os.makedirs(out_subdir, exist_ok=True)
-        logger_name = 'logs'
-        train(model_name, train_file, val_file, out_subdir, logger_name, device_type, devices)
+        logger_name = "logs"
+        train(
+            model_name,
+            train_file,
+            val_file,
+            out_subdir,
+            logger_name,
+            device_type,
+            devices,
+        )
 
-    print('done.')
+    print("done.")
