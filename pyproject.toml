@@ -6,6 +6,7 @@ dependencies = [
     "boto3>=1.43.34",
     "pandas>=3.0.3",
     "pillow>=12.2.0",
+    "python-dotenv>=1.2.2",
     "requests>=2.34.2",
     "tqdm>=4.68.3",
 ]

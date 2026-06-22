@@ -252,3 +252,4 @@ $RECYCLE.BIN/
 # User added
 !data/hci-alt-text-dataset-20220915.jsonl
 !data/pdf_alttext_success.csv
+data/images
